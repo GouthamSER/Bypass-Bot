@@ -1,4 +1,5 @@
 import asyncio
+import os
 import ipaddress
 import re
 import socket
@@ -8,11 +9,18 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
-from .hosts import host_label
+try:
+    from .hosts import host_label
+except ImportError:
+    from hosts import host_label
 
 SIZE_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB)\b", re.I)
 MAX_BODY = 2_000_000
-USER_AGENT = "Mozilla/5.0 (compatible; MultiHostLinkInspector/1.0)"
+USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+# GDFlix rotates domains; a file ID may only exist on one of them.
+GDFLIX_DOMAINS = [d.strip() for d in os.getenv(
+    "GDFLIX_DOMAINS", "new8.gdflix.io,gdflix.dev,gdflix.io,gdflix.net").split(",") if d.strip()]
 
 
 @dataclass
@@ -93,16 +101,100 @@ def _clean_label(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()[:70]
 
 
+_META_RE = re.compile(r'<meta[^>]+http-equiv=["\']?refresh["\']?[^>]+content=["\'][^"\'>]*?url=([^"\'>\s]+)', re.I)
+_JS_RE = re.compile(r'(?:window\.|document\.|top\.)?location(?:\.href)?\s*(?:=|\.replace\(|\.assign\()\s*["\']([^"\']+)["\']', re.I)
+_working_domain: str | None = None  # last domain that served a file page
+
+
+def _client_redirect(raw: bytes, base: str) -> str | None:
+    """Meta-refresh / JS redirect found in a tiny page body."""
+    if len(raw) > 20_000:
+        return None
+    text = raw.decode("utf-8", "ignore")
+    m = _META_RE.search(text) or _JS_RE.search(text)
+    if not m:
+        return None
+    target = urljoin(base, m.group(1).strip())
+    return target if target != base else None
+
+
+def _is_gdflix_file(url: str) -> bool:
+    p = urlparse(url)
+    return "gdflix" in (p.hostname or "").lower() and p.path.startswith("/file/")
+
+
+async def _resolve_gdflix(client, url, max_redirects, first):
+    """GDFlix rotates domains. Follow JS/meta redirects, ask the old domain's
+    root where it now lives, then try known domains. Remembers the winner."""
+    global _working_domain
+    status, headers, raw, final_url = first
+
+    # client-side redirect (meta refresh / window.location)
+    for _ in range(3):
+        nxt = _client_redirect(raw, final_url)
+        if not nxt:
+            break
+        status, headers, raw, final_url = await fetch_with_redirects(client, nxt, max_redirects)
+    if 200 <= status < 300:
+        return status, headers, raw, final_url
+
+    if not _is_gdflix_file(url):
+        return status, headers, raw, final_url
+
+    parsed = urlparse(url)
+    old = (parsed.hostname or "").lower()
+    candidates: list[str] = []
+    if _working_domain:
+        candidates.append(_working_domain)
+    # where does the old domain's root redirect now?
+    try:
+        _, _, root_raw, root_final = await fetch_with_redirects(client, f"{parsed.scheme}://{old}/", max_redirects)
+        host = urlparse(root_final).hostname
+        if not host or host == old:
+            nxt = _client_redirect(root_raw, root_final)
+            host = urlparse(nxt).hostname if nxt else None
+        if host:
+            candidates.append(host.lower())
+    except Exception:
+        pass
+    candidates += GDFLIX_DOMAINS
+
+    tried = {old}
+    for domain in candidates:
+        if domain in tried:
+            continue
+        tried.add(domain)
+        try:
+            st, hd, bd, fu = await fetch_with_redirects(
+                client, parsed._replace(netloc=domain).geturl(), max_redirects)
+            for _ in range(3):
+                nxt = _client_redirect(bd, fu)
+                if not nxt:
+                    break
+                st, hd, bd, fu = await fetch_with_redirects(client, nxt, max_redirects)
+        except Exception:
+            continue
+        if 200 <= st < 300:
+            _working_domain = urlparse(fu).hostname
+            return st, hd, bd, fu
+    return status, headers, raw, final_url
+
+
 async def inspect_url(url: str, timeout: float = 20, max_redirects: int = 8,
                       max_links: int = 12) -> Result:
-    headers = {"User-Agent": USER_AGENT, "Accept": "text/html,application/xhtml+xml"}
+    headers = {"User-Agent": USER_AGENT,
+               "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+               "Accept-Language": "en-US,en;q=0.9"}
     limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
     async with httpx.AsyncClient(timeout=timeout, headers=headers, limits=limits) as client:
         status, response_headers, raw, final_url = await fetch_with_redirects(client, url, max_redirects)
+        if not 200 <= status < 300 or _client_redirect(raw, final_url):
+            status, response_headers, raw, final_url = await _resolve_gdflix(
+                client, url, max_redirects, (status, response_headers, raw, final_url))
 
     content_type = response_headers.get("content-type", "").lower()
     if not 200 <= status < 300:
-        raise ValueError(f"Page returned HTTP {status}.")
+        raise ValueError(f"Page returned HTTP {status} at {final_url}")
     if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
         # A direct file URL is still useful as a single download link.
         name = urlparse(final_url).path.rsplit("/", 1)[-1] or "Direct download"

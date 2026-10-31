@@ -7,8 +7,12 @@ from dotenv import load_dotenv
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-from .hosts import host_label
-from .resolver import inspect_url
+try:
+    from .hosts import host_label
+    from .resolver import inspect_url
+except ImportError:  # run as a plain script (python main.py)
+    from hosts import host_label
+    from resolver import inspect_url
 
 load_dotenv()
 
