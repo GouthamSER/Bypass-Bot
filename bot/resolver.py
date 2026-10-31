@@ -16,8 +16,8 @@ except ImportError:
 
 SIZE_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB)\b", re.I)
 MAX_BODY = 2_000_000
-USER_AGENT = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-              "(KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+# Honest default UA. Override with USER_AGENT env var if a host needs something else.
+USER_AGENT = os.getenv("USER_AGENT", "Mozilla/5.0 (compatible; MultiHostLinkInspector/1.0)")
 # GDFlix rotates domains; a file ID may only exist on one of them.
 GDFLIX_DOMAINS = [d.strip() for d in os.getenv(
     "GDFLIX_DOMAINS", "new8.gdflix.io,gdflix.dev,gdflix.io,gdflix.net").split(",") if d.strip()]
@@ -183,10 +183,9 @@ async def _resolve_gdflix(client, url, max_redirects, first):
 async def inspect_url(url: str, timeout: float = 20, max_redirects: int = 8,
                       max_links: int = 12) -> Result:
     headers = {"User-Agent": USER_AGENT,
-               "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-               "Accept-Language": "en-US,en;q=0.9"}
+               "Accept": "text/html,application/xhtml+xml"}
     limits = httpx.Limits(max_connections=10, max_keepalive_connections=5)
-    async with httpx.AsyncClient(timeout=timeout, headers=headers, limits=limits) as client:
+    async with httpx.AsyncClient(timeout=timeout, headers=headers, limits=limits, http2=True) as client:
         status, response_headers, raw, final_url = await fetch_with_redirects(client, url, max_redirects)
         if not 200 <= status < 300 or _client_redirect(raw, final_url):
             status, response_headers, raw, final_url = await _resolve_gdflix(
@@ -208,6 +207,10 @@ async def inspect_url(url: str, timeout: float = 20, max_redirects: int = 8,
         return Result(url, final_url, name, _fmt_bytes(response_headers.get("content-length")),
                       [(name, final_url)], "The destination is not an HTML page.")
 
+    return parse_html(url, raw, final_url, max_links)
+
+
+def parse_html(url: str, raw: bytes, final_url: str, max_links: int = 12) -> Result:
     soup = BeautifulSoup(raw, "html.parser")
     title = soup.title.get_text(" ", strip=True) if soup.title else "Untitled page"
     page_text = soup.get_text(" ", strip=True)

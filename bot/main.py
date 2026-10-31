@@ -2,6 +2,8 @@ import asyncio
 import html
 import os
 import re
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from dotenv import load_dotenv
 from pyrogram import Client, filters
@@ -9,10 +11,10 @@ from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 try:
     from .hosts import host_label
-    from .resolver import inspect_url
+    from .resolver import inspect_url, parse_html
 except ImportError:  # run as a plain script (python main.py)
     from hosts import host_label
-    from resolver import inspect_url
+    from resolver import inspect_url, parse_html
 
 load_dotenv()
 
@@ -148,7 +150,61 @@ async def handle_links(_, message):
     )
 
 
+class _Health(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"ok")
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+    def log_message(self, *args):
+        pass
+
+
+@app.on_message(filters.private & filters.document)
+async def handle_html_file(_, message):
+    """Offline mode: user saves the page in their browser and sends the .html file."""
+    doc = message.document
+    name = (doc.file_name or "").lower()
+    if not name.endswith((".html", ".htm")):
+        await message.reply_text("Send a saved .html page, or a link.")
+        return
+    if doc.file_size and doc.file_size > 5_000_000:
+        await message.reply_text("File too big (max 5 MB).")
+        return
+    status = await message.reply_text("🔎 Reading saved page…")
+    try:
+        data = await message.download(in_memory=True)
+        raw = bytes(data.getbuffer())
+        soup_text = raw[:200_000].decode("utf-8", "ignore")
+        m = re.search(r'(?:property=["\']og:url["\']\s+content|rel=["\']canonical["\']\s+href|<base\s+href)=["\']([^"\']+)', soup_text, re.I)
+        base = m.group(1) if m else "https://new8.gdflix.io/"
+        result = parse_html(base, raw, base, MAX_LINKS)
+        text = (
+            f"<b>Title:</b> {html.escape(result.title)}\n"
+            f"<b>Host:</b> {html.escape(host_label(result.final_url))}"
+            + (f"\n<b>Size:</b> {html.escape(result.size)}" if result.size else "")
+            + f"\n<b>Found links:</b> {len(result.links)}"
+        )
+        await status.edit_text("💥 <b>Saved page results</b>\n\n" + text,
+                               reply_markup=build_keyboard(result.links),
+                               disable_web_page_preview=True)
+    except Exception as exc:
+        await status.edit_text(f"<b>Error:</b> {html.escape(str(exc)[:220])}")
+
+
+def _start_health_server():
+    """Tiny HTTP server so hosts that need an open port (Koyeb, Render, Docker -p) stay healthy."""
+    port = int(os.getenv("PORT", "8080"))
+    server = HTTPServer(("0.0.0.0", port), _Health)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+
 def main():
+    _start_health_server()
     app.run()
 
 
