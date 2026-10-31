@@ -7,6 +7,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from dotenv import load_dotenv
 from pyrogram import Client, filters
+from pyrogram.errors import ButtonUrlInvalid
 from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 try:
@@ -38,6 +39,33 @@ def extract_urls(text: str) -> list[str]:
         if url not in urls:
             urls.append(url)
     return urls[:5]
+
+
+BUTTON_URL_MAX = 512  # Telegram rejects long button URLs (BUTTON_URL_INVALID)
+
+
+def _button_ok(url: str) -> bool:
+    return len(url) <= BUTTON_URL_MAX and url.isascii() and " " not in url
+
+
+def _links_as_text(links) -> str:
+    return "\n".join(
+        f'• <a href="{html.escape(u, quote=True)}">{html.escape(l[:60])}</a>' for l, u in links
+    )
+
+
+async def send_results(status, text: str, links):
+    """Short links -> buttons. Long/odd links -> clickable text. Never crash on bad button URLs."""
+    links = list(links)[:MAX_LINKS]
+    short = [(l, u) for l, u in links if _button_ok(u)]
+    long_ = [(l, u) for l, u in links if not _button_ok(u)]
+    body = text + (("\n\n<b>More links:</b>\n" + _links_as_text(long_)) if long_ else "")
+    try:
+        await status.edit_text(body, reply_markup=build_keyboard(short),
+                               disable_web_page_preview=True)
+    except ButtonUrlInvalid:
+        await status.edit_text(text + "\n\n<b>Links:</b>\n" + _links_as_text(links),
+                               disable_web_page_preview=True)
 
 
 def build_keyboard(links):
@@ -106,11 +134,7 @@ async def bypass_command(_, message):
         except Exception as exc:
             output.append(f"<b>Link:</b> {html.escape(url)}\n<b>Error:</b> {html.escape(str(exc)[:220])}")
 
-    await status.edit_text(
-        "💥 <b>Bypass results</b>\n\n" + "\n\n".join(output),
-        reply_markup=build_keyboard(buttons),
-        disable_web_page_preview=True,
-    )
+    await send_results(status, "💥 <b>Bypass results</b>\n\n" + "\n\n".join(output), buttons)
 
 
 @app.on_message(filters.private & filters.text & ~filters.command(["start", "help", "b"]))
@@ -142,12 +166,7 @@ async def handle_links(_, message):
         except Exception as exc:
             output.append(f"<b>Link:</b> {html.escape(url)}\n<b>Error:</b> {html.escape(str(exc)[:220])}")
 
-    keyboard = build_keyboard(buttons)
-    await status.edit_text(
-        "💥 <b>Link inspection results</b>\n\n" + "\n\n".join(output),
-        reply_markup=keyboard,
-        disable_web_page_preview=True,
-    )
+    await send_results(status, "💥 <b>Link inspection results</b>\n\n" + "\n\n".join(output), buttons)
 
 
 class _Health(BaseHTTPRequestHandler):
@@ -189,9 +208,7 @@ async def handle_html_file(_, message):
             + (f"\n<b>Size:</b> {html.escape(result.size)}" if result.size else "")
             + f"\n<b>Found links:</b> {len(result.links)}"
         )
-        await status.edit_text("💥 <b>Saved page results</b>\n\n" + text,
-                               reply_markup=build_keyboard(result.links),
-                               disable_web_page_preview=True)
+        await send_results(status, "💥 <b>Saved page results</b>\n\n" + text, result.links)
     except Exception as exc:
         await status.edit_text(f"<b>Error:</b> {html.escape(str(exc)[:220])}")
 
