@@ -45,9 +45,10 @@ def extract_urls(text: str) -> list[str]:
 FRIENDLY = (  # (substring in lowercase label, shown name)
     ("telegram", "Telegram"),
     ("instant", "Instant Download"),
+    ("fast download", "Fast Cloud Download"),
     ("fast cloud", "Fast Cloud Download"),
     ("zipdisk", "Fast Cloud Download"),
-    ("cloud resume", "Download"),
+    ("resume", "Download"),
     ("cloud download", "Cloud Download"),
     ("gofile", "GoFile"),
     ("pixel", "PixelDrain"),
