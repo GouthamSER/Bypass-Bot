@@ -186,6 +186,13 @@ async def expand_cloud_links(result: Result, timeout, max_redirects, max_links, 
     """GDFlix 'FAST CLOUD / ZIPDISK' goes to a /cloud/ page that holds the real
     download anchor. Open it (an ordinary public page) and swap in its links."""
     targets = [(l, u) for l, u in result.links if _is_gdflix_cloud(u)]
+    synthetic = None
+    if not targets and _is_gdflix_file(result.final_url):
+        # Fast Cloud page lives at /cloud/<same file id>; try it when the file page has no such link.
+        fp = urlparse(result.final_url)
+        synthetic = ("FAST CLOUD / ZIPDISK", fp._replace(path=fp.path.replace("/file/", "/cloud/", 1), query="").geturl())
+        targets = [synthetic]
+        result.links = result.links + [synthetic]
     if not targets:
         return result
     out: list[tuple[str, str]] = []
@@ -206,10 +213,14 @@ async def expand_cloud_links(result: Result, timeout, max_redirects, max_links, 
                 if not real:
                     log.warning("cloud page %s: no external link. anchors seen: %s", final,
                                 [(l, u[:60]) for l, u in sub.links])
-                out.extend([(label, u) for _, u in real] or [(label, url)])
+                if real:
+                    out.extend([(label, u) for _, u in real])
+                elif (label, url) != synthetic:
+                    out.append((label, url))
             except Exception as exc:
                 log.warning("cloud expand failed for %s: %r", url, exc)
-                out.append((label, url))
+                if (label, url) != synthetic:
+                    out.append((label, url))
     seen, uniq = set(), []
     for l, u in out:
         if u not in seen:
