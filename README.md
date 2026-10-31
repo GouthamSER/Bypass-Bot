@@ -11,7 +11,8 @@ content for users.
 - Accepts one or more HTTP(S) URLs in a message
 - Follows a limited number of normal HTTP redirects
 - Extracts visible links from the final HTML page
-- Labels common hosts (GoFile, Pixeldrain, Google Drive, MediaFire, etc.)\n- Prioritizes GDFlix mirror actions (Instant DL, Cloud Download, Fast Cloud/ZipDisk, Multiup/GoFile, Telegram Generate)
+- Labels common hosts (GoFile, Pixeldrain, Google Drive, MediaFire, etc.)
+- Prioritizes GDFlix mirror actions (Instant DL, Cloud Download, Fast Cloud/ZipDisk, Multiup/GoFile, Telegram Generate)
 - Sends URL buttons for discovered links
 - Modular host registry in `bot/hosts.py`
 - Basic SSRF protections: only HTTP/HTTPS on ports 80/443; blocks localhost,
