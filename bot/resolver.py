@@ -194,7 +194,14 @@ async def inspect_url(url: str, timeout: float = 20, max_redirects: int = 8,
 
     content_type = response_headers.get("content-type", "").lower()
     if not 200 <= status < 300:
-        raise ValueError(f"Page returned HTTP {status} at {final_url}")
+        hint = ""
+        low = {k.lower(): v for k, v in response_headers.items()}
+        body = raw[:4000].decode("utf-8", "ignore").lower()
+        if status in (403, 429, 503) and ("cloudflare" in low.get("server", "").lower()
+                                         or "cf-mitigated" in low or "just a moment" in body
+                                         or "cf-ray" in low):
+            hint = " (Cloudflare bot check blocked this server's request; the bot does not bypass it)"
+        raise ValueError(f"Page returned HTTP {status} at {final_url}{hint}")
     if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
         # A direct file URL is still useful as a single download link.
         name = urlparse(final_url).path.rsplit("/", 1)[-1] or "Direct download"
