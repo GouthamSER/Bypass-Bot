@@ -3,12 +3,11 @@ import html
 import os
 import re
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from dotenv import load_dotenv
 from pyrogram import Client, filters
-from pyrogram.errors import ButtonUrlInvalid
-from pyrogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 try:
     from .hosts import host_label
@@ -41,38 +40,72 @@ def extract_urls(text: str) -> list[str]:
     return urls[:5]
 
 
-BUTTON_URL_MAX = 512  # Telegram rejects long button URLs (BUTTON_URL_INVALID)
+FRIENDLY = (  # (substring in lowercase label, shown name)
+    ("telegram", "Telegram"),
+    ("instant", "Instant Download"),
+    ("fast cloud", "Fast Cloud Download"),
+    ("zipdisk", "Fast Cloud Download"),
+    ("cloud resume", "Download"),
+    ("cloud download", "Cloud Download"),
+    ("gofile", "GoFile"),
+    ("pixel", "PixelDrain"),
+)
 
 
-def _button_ok(url: str) -> bool:
-    return len(url) <= BUTTON_URL_MAX and url.isascii() and " " not in url
+def friendly_name(label: str, url: str) -> str:
+    low = label.lower()
+    for key, name in FRIENDLY:
+        if key in low:
+            return name
+    return label[:40] or host_label(url)
 
 
-def _links_as_text(links) -> str:
-    return "\n".join(
-        f'• <a href="{html.escape(u, quote=True)}">{html.escape(l[:60])}</a>' for l, u in links
-    )
+def clean_title(title: str) -> str:
+    return re.sub(r"^\s*GDFlix\s*\|\s*", "", title).strip()
 
 
-async def send_results(status, text: str, links):
-    """Short links -> buttons. Long/odd links -> clickable text. Never crash on bad button URLs."""
-    links = list(links)[:MAX_LINKS]
-    short = [(l, u) for l, u in links if _button_ok(u)]
-    long_ = [(l, u) for l, u in links if not _button_ok(u)]
-    body = text + (("\n\n<b>More links:</b>\n" + _links_as_text(long_)) if long_ else "")
-    try:
-        await status.edit_text(body, reply_markup=build_keyboard(short),
-                               disable_web_page_preview=True)
-    except ButtonUrlInvalid:
-        await status.edit_text(text + "\n\n<b>Links:</b>\n" + _links_as_text(links),
-                               disable_web_page_preview=True)
+def format_result(result, elapsed: float) -> str:
+    """Clean card: Title / Size / Download Links / Elapsed (no buttons)."""
+    e = html.escape
+    parts = [
+        "▸ <b>Title ➙</b>\n<blockquote>" + e(clean_title(result.title)) + "</blockquote>",
+    ]
+    if result.size:
+        parts.append(f"▸ <b>Size ➙</b> {e(result.size)}")
+    links, seen = [], set()
+    for label, url in result.links:
+        if "login" in label.lower():  # needs an account, not a download
+            continue
+        name = friendly_name(label, url)
+        if name in seen:
+            name = f"{name} 2"
+        seen.add(name)
+        links.append(f'• <a href="{e(url, quote=True)}">{e(name)}</a>')
+    if links:
+        parts.append("▸ <b>Download Links ➙</b>\n\n" + "\n".join(links))
+    if result.note:
+        parts.append(f"<i>{e(result.note)}</i>")
+    parts.append(f"<blockquote>⧖ <b>Elapsed ➙</b> {elapsed:.1f}s</blockquote>")
+    return "\n\n".join(parts)
 
 
-def build_keyboard(links):
-    rows = []
-    for label, url in links[:MAX_LINKS]:
-        rows.append([InlineKeyboardButton(f"⬇️ {host_label(url)} · {label[:35]}", url=url)])
-    return InlineKeyboardMarkup(rows) if rows else None
+async def run_inspection(urls):
+    """Inspect each URL -> list of formatted blocks."""
+    blocks = []
+    for url in urls:
+        t0 = time.monotonic()
+        try:
+            async with semaphore:
+                result = await inspect_url(url, TIMEOUT, MAX_REDIRECTS, MAX_LINKS)
+            blocks.append(format_result(result, time.monotonic() - t0))
+        except Exception as exc:
+            blocks.append(f"<b>Link:</b> {html.escape(url)}\n<b>Error:</b> {html.escape(str(exc)[:220])}")
+    return blocks
+
+
+async def reply_card(status, blocks):
+    text = "\n\n➖➖➖\n\n".join(blocks)
+    await status.edit_text(text[:4090], disable_web_page_preview=True)
 
 
 @app.on_message(filters.command("start"))
@@ -92,7 +125,7 @@ async def help_cmd(_, message):
         "**How to use**\n"
         "1. Send one or more links (up to 5).\n"
         "2. Wait while I inspect the public page.\n"
-        "3. Tap a discovered mirror button.\n\n"
+        "3. Tap a link in the result.\n\n"
         "**Supported:** ordinary HTTP redirects and links visible in HTML pages.\n"
         "**Not supported:** bypassing CAPTCHA, login, paywalls, ad gates, DRM, "
         "anti-bot controls, or other access restrictions.\n\n"
@@ -113,28 +146,8 @@ async def bypass_command(_, message):
         )
         return
 
-    status = await message.reply_text("🔎 Resolving link and inspecting available page links…")
-    output = []
-    buttons = []
-
-    for url in urls:
-        try:
-            async with semaphore:
-                result = await inspect_url(url, TIMEOUT, MAX_REDIRECTS, MAX_LINKS)
-
-            output.append(
-                f"<b>💥 {html.escape(result.title)}</b>\n"
-                f"<b>Host:</b> {html.escape(host_label(result.final_url))}\n"
-                f'<b>Page:</b> <a href="{html.escape(result.final_url, quote=True)}">Open resolved page</a>'
-                + (f"\n<b>Size:</b> {html.escape(result.size)}" if result.size else "")
-                + (f"\n<i>{html.escape(result.note)}</i>" if result.note else "")
-                + f"\n<b>Available page links:</b> {len(result.links)}"
-            )
-            buttons.extend(result.links)
-        except Exception as exc:
-            output.append(f"<b>Link:</b> {html.escape(url)}\n<b>Error:</b> {html.escape(str(exc)[:220])}")
-
-    await send_results(status, "💥 <b>Bypass results</b>\n\n" + "\n\n".join(output), buttons)
+    status = await message.reply_text("🔎 Resolving link…")
+    await reply_card(status, await run_inspection(urls))
 
 
 @app.on_message(filters.private & filters.text & ~filters.command(["start", "help", "b"]))
@@ -145,28 +158,7 @@ async def handle_links(_, message):
         return
 
     status = await message.reply_text(f"🔎 Inspecting {len(urls)} link(s)…")
-    output = []
-    buttons = []
-
-    for url in urls:
-        try:
-            async with semaphore:
-                result = await inspect_url(url, TIMEOUT, MAX_REDIRECTS, MAX_LINKS)
-
-            output.append(
-                f"<b>Title:</b> {html.escape(result.title)}\n"
-                f"<b>Host:</b> {html.escape(host_label(result.final_url))}\n"
-                f'<b>Resolved:</b> <a href="{html.escape(result.final_url, quote=True)}">Open page</a>'
-                + (f"\n<b>Size:</b> {html.escape(result.size)}" if result.size else "")
-                + (f"\n<i>{html.escape(result.note)}</i>" if result.note else "")
-                + f"\n<b>Found links:</b> {len(result.links)}"
-            )
-            for label, link in result.links:
-                buttons.append((label, link))
-        except Exception as exc:
-            output.append(f"<b>Link:</b> {html.escape(url)}\n<b>Error:</b> {html.escape(str(exc)[:220])}")
-
-    await send_results(status, "💥 <b>Link inspection results</b>\n\n" + "\n\n".join(output), buttons)
+    await reply_card(status, await run_inspection(urls))
 
 
 class _Health(BaseHTTPRequestHandler):
@@ -195,20 +187,15 @@ async def handle_html_file(_, message):
         await message.reply_text("File too big (max 5 MB).")
         return
     status = await message.reply_text("🔎 Reading saved page…")
+    t0 = time.monotonic()
     try:
         data = await message.download(in_memory=True)
         raw = bytes(data.getbuffer())
-        soup_text = raw[:200_000].decode("utf-8", "ignore")
-        m = re.search(r'(?:property=["\']og:url["\']\s+content|rel=["\']canonical["\']\s+href|<base\s+href)=["\']([^"\']+)', soup_text, re.I)
+        head = raw[:200_000].decode("utf-8", "ignore")
+        m = re.search(r'(?:property=["\']og:url["\']\s+content|rel=["\']canonical["\']\s+href|<base\s+href)=["\']([^"\']+)', head, re.I)
         base = m.group(1) if m else "https://new8.gdflix.io/"
         result = parse_html(base, raw, base, MAX_LINKS)
-        text = (
-            f"<b>Title:</b> {html.escape(result.title)}\n"
-            f"<b>Host:</b> {html.escape(host_label(result.final_url))}"
-            + (f"\n<b>Size:</b> {html.escape(result.size)}" if result.size else "")
-            + f"\n<b>Found links:</b> {len(result.links)}"
-        )
-        await send_results(status, "💥 <b>Saved page results</b>\n\n" + text, result.links)
+        await reply_card(status, [format_result(result, time.monotonic() - t0)])
     except Exception as exc:
         await status.edit_text(f"<b>Error:</b> {html.escape(str(exc)[:220])}")
 
