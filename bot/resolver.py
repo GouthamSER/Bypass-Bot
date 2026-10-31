@@ -180,6 +180,43 @@ async def _resolve_gdflix(client, url, max_redirects, first):
     return status, headers, raw, final_url
 
 
+async def expand_cloud_links(result: Result, timeout, max_redirects, max_links, headers, limits) -> Result:
+    """GDFlix 'FAST CLOUD / ZIPDISK' goes to a /cloud/ page that holds the real
+    download anchor. Open it (an ordinary public page) and swap in its links."""
+    targets = [(l, u) for l, u in result.links if _is_gdflix_cloud(u)]
+    if not targets:
+        return result
+    out: list[tuple[str, str]] = []
+    async with httpx.AsyncClient(timeout=timeout, headers=headers, limits=limits, http2=True) as client:
+        for label, url in result.links:
+            if (label, url) not in targets:
+                out.append((label, url))
+                continue
+            try:
+                st, hd, raw, final = await fetch_with_redirects(client, url, max_redirects)
+                if not 200 <= st < 300:
+                    raise ValueError(st)
+                sub = parse_html(url, raw, final, max_links)
+                own = (urlparse(final).hostname or "").lower()
+                real = [(l, u) for l, u in sub.links
+                        if (urlparse(u).hostname or "").lower() != own and "login" not in l.lower()]
+                out.extend(real or [(label, url)])
+            except Exception:
+                out.append((label, url))
+    seen, uniq = set(), []
+    for l, u in out:
+        if u not in seen:
+            seen.add(u)
+            uniq.append((l, u))
+    result.links = uniq[:max_links]
+    return result
+
+
+def _is_gdflix_cloud(url: str) -> bool:
+    p = urlparse(url)
+    return "gdflix" in (p.hostname or "").lower() and p.path.startswith("/cloud/")
+
+
 async def inspect_url(url: str, timeout: float = 20, max_redirects: int = 8,
                       max_links: int = 12) -> Result:
     headers = {"User-Agent": USER_AGENT,
@@ -207,7 +244,8 @@ async def inspect_url(url: str, timeout: float = 20, max_redirects: int = 8,
         return Result(url, final_url, name, _fmt_bytes(response_headers.get("content-length")),
                       [(name, final_url)], "The destination is not an HTML page.")
 
-    return parse_html(url, raw, final_url, max_links)
+    result = parse_html(url, raw, final_url, max_links)
+    return await expand_cloud_links(result, timeout, max_redirects, max_links, headers, limits)
 
 
 def parse_html(url: str, raw: bytes, final_url: str, max_links: int = 12) -> Result:
