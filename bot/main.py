@@ -17,6 +17,8 @@ except ImportError:  # run as a plain script (python main.py)
     from resolver import inspect_url, parse_html
 
 load_dotenv()
+import logging
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(name)s: %(message)s")
 
 API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
