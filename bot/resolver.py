@@ -200,7 +200,7 @@ async def expand_cloud_links(result: Result, timeout, max_redirects, max_links, 
                 own = (urlparse(final).hostname or "").lower()
                 real = [(l, u) for l, u in sub.links
                         if (urlparse(u).hostname or "").lower() != own and "login" not in l.lower()]
-                out.extend(real or [(label, url)])
+                out.extend([(label, u) for _, u in real] or [(label, url)])
             except Exception:
                 out.append((label, url))
     seen, uniq = set(), []
