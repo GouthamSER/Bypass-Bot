@@ -2,7 +2,6 @@ import asyncio
 import html
 import os
 import re
-from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from pyrogram import Client, filters
@@ -75,7 +74,7 @@ async def bypass_command(_, message):
     urls = extract_urls(command_text)
     if not urls:
         await message.reply_text(
-            "Usage: /b https://gdflix.dev/file/FILE_ID\\n"
+            "Usage: /b https://gdflix.dev/file/FILE_ID\n"
             "Send a GDFlix or other supported HTTP(S) page link after /b."
         )
         return
@@ -90,19 +89,19 @@ async def bypass_command(_, message):
                 result = await inspect_url(url, TIMEOUT, MAX_REDIRECTS, MAX_LINKS)
 
             output.append(
-                f"<b>💥 {html.escape(result.title)}</b>\\n"
-                f"<b>Host:</b> {html.escape(host_label(result.final_url))}\\n"
-                f"<b>Page:</b> <a href=\\\"{html.escape(result.final_url, quote=True)}\\\">Open resolved page</a>"
-                + (f"\\n<b>Size:</b> {html.escape(result.size)}" if result.size else "")
-                + (f"\\n<i>{html.escape(result.note)}</i>" if result.note else "")
-                + f"\\n<b>Available page links:</b> {len(result.links)}"
+                f"<b>💥 {html.escape(result.title)}</b>\n"
+                f"<b>Host:</b> {html.escape(host_label(result.final_url))}\n"
+                f'<b>Page:</b> <a href="{html.escape(result.final_url, quote=True)}">Open resolved page</a>'
+                + (f"\n<b>Size:</b> {html.escape(result.size)}" if result.size else "")
+                + (f"\n<i>{html.escape(result.note)}</i>" if result.note else "")
+                + f"\n<b>Available page links:</b> {len(result.links)}"
             )
             buttons.extend(result.links)
         except Exception as exc:
-            output.append(f"<b>Link:</b> {html.escape(url)}\\n<b>Error:</b> {html.escape(str(exc)[:220])}")
+            output.append(f"<b>Link:</b> {html.escape(url)}\n<b>Error:</b> {html.escape(str(exc)[:220])}")
 
     await status.edit_text(
-        "💥 <b>Bypass results</b>\\n\\n" + "\\n\\n".join(output),
+        "💥 <b>Bypass results</b>\n\n" + "\n\n".join(output),
         reply_markup=build_keyboard(buttons),
         disable_web_page_preview=True,
     )

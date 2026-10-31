@@ -51,8 +51,8 @@ def _validate_public_http_url(url: str) -> None:
 async def fetch_with_redirects(client: httpx.AsyncClient, url: str, max_redirects: int):
     current = url
     for _ in range(max_redirects + 1):
-        _validate_public_http_url(current)
-        async with client.stream(current, follow_redirects=False) as response:
+        await asyncio.get_running_loop().run_in_executor(None, _validate_public_http_url, current)
+        async with client.stream("GET", current, follow_redirects=False) as response:
             status = response.status_code
             headers = dict(response.headers)
             final_url = str(response.url)
@@ -79,9 +79,18 @@ def _extract_size(text: str) -> str | None:
     return f"{match.group(1)} {match.group(2).upper()}" if match else None
 
 
+def _fmt_bytes(value: str | None) -> str | None:
+    if not value or not value.isdigit():
+        return None
+    n = float(value)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{n:.2f} {unit}" if unit != "B" else f"{int(n)} B"
+        n /= 1024
+
+
 def _clean_label(value: str) -> str:
-    value = re.sub(r"\s+", " ", value).strip()
-    return value[:70] or "Download"
+    return re.sub(r"\s+", " ", value).strip()[:70]
 
 
 async def inspect_url(url: str, timeout: float = 20, max_redirects: int = 8,
@@ -97,7 +106,7 @@ async def inspect_url(url: str, timeout: float = 20, max_redirects: int = 8,
     if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
         # A direct file URL is still useful as a single download link.
         name = urlparse(final_url).path.rsplit("/", 1)[-1] or "Direct download"
-        return Result(url, final_url, name, _extract_size(response_headers.get("content-length", "")),
+        return Result(url, final_url, name, _fmt_bytes(response_headers.get("content-length")),
                       [(name, final_url)], "The destination is not an HTML page.")
 
     soup = BeautifulSoup(raw, "html.parser")
@@ -115,8 +124,9 @@ async def inspect_url(url: str, timeout: float = 20, max_redirects: int = 8,
                     for token in ("gdflix",))
     if is_gdflix:
         preferred_terms = (
-            "instant dl", "cloud download", "fast cloud", "zipdisk",
-            "multiup", "gofile", "mirror", "telegram generate",
+            "instant dl", "cloud download", "fast cloud", "zipdisk", "zip-disk",
+            "multiup", "gofile", "mirror", "telegram generate", "pixel",
+            "drivebot", "download",
         )
         preferred = [
             a for a in anchors
