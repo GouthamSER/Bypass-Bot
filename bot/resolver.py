@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import os
 import ipaddress
 import re
@@ -14,6 +15,7 @@ try:
 except ImportError:
     from hosts import host_label
 
+log = logging.getLogger("resolver")
 SIZE_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB)\b", re.I)
 MAX_BODY = 2_000_000
 # Honest default UA. Override with USER_AGENT env var if a host needs something else.
@@ -193,15 +195,20 @@ async def expand_cloud_links(result: Result, timeout, max_redirects, max_links, 
                 out.append((label, url))
                 continue
             try:
+                client.headers["Referer"] = result.final_url  # same as clicking the button
                 st, hd, raw, final = await fetch_with_redirects(client, url, max_redirects)
                 if not 200 <= st < 300:
-                    raise ValueError(st)
+                    raise ValueError(f"cloud page HTTP {st} at {final}")
                 sub = parse_html(url, raw, final, max_links)
                 own = (urlparse(final).hostname or "").lower()
                 real = [(l, u) for l, u in sub.links
                         if (urlparse(u).hostname or "").lower() != own and "login" not in l.lower()]
+                if not real:
+                    log.warning("cloud page %s: no external link. anchors seen: %s", final,
+                                [(l, u[:60]) for l, u in sub.links])
                 out.extend([(label, u) for _, u in real] or [(label, url)])
-            except Exception:
+            except Exception as exc:
+                log.warning("cloud expand failed for %s: %r", url, exc)
                 out.append((label, url))
     seen, uniq = set(), []
     for l, u in out:
