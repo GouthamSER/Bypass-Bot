@@ -1,5 +1,11 @@
 services:
-  bot:
+  gdbot:
     build: .
+    image: gdbot
+    container_name: gdbot
     restart: unless-stopped
     env_file: .env
+    environment:
+      PORT: "8081"
+    ports:
+      - "8081:8081"
