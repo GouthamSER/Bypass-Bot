@@ -1,11 +1,19 @@
 services:
   gdbot:
     build: .
-    image: gdbot
+    image: gdbot:latest
     container_name: gdbot
     restart: unless-stopped
+    init: true
     env_file: .env
     environment:
-      PORT: "8081"
+      PORT: "8080"
     ports:
-      - "8081:8081"
+      - "8080:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

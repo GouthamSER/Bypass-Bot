@@ -3,3 +3,4 @@ TgCrypto
 httpx[http2]>=0.27,<1
 beautifulsoup4>=4.12,<5
 python-dotenv>=1.0,<2
+

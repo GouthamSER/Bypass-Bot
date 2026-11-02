@@ -1,30 +1,49 @@
-# Multi-host Telegram Link Inspector (Pyrogram)
+# Multi-host Telegram Link Inspector
 
-A modular Telegram bot that follows ordinary HTTP redirects and extracts publicly
-visible download/mirror links from pages you are authorized to access. It does
-**not** defeat paywalls, CAPTCHA, login requirements, ad gates, DRM, anti-bot
-controls, or provider access restrictions, and it does not download copyrighted
-content for users.
+A lightweight Pyrogram bot that follows ordinary HTTP redirects and extracts publicly visible links from HTML pages you are authorized to inspect. It does not bypass CAPTCHA, login requirements, paywalls, DRM, ad gates, or anti-bot controls, and it does not download files.
 
-## Features
+## Provider adapters (`bot/providers.py`)
 
-- Pyrogram bot with `/start`, `/help`, and `/b <link>`
-- Accepts one or more HTTP(S) URLs in a message
-- Follows a limited number of normal HTTP redirects
-- Extracts visible links from the final HTML page
-- Labels common hosts (GoFile, Pixeldrain, Google Drive, MediaFire, etc.)
-- Prioritizes GDFlix mirror actions (Instant DL, Cloud Download, Fast Cloud/ZipDisk, Multiup/GoFile, Telegram Generate)
-- Sends URL buttons for discovered links
-- Modular host registry in `bot/hosts.py`
-- Basic SSRF protections: only HTTP/HTTPS on ports 80/443; blocks localhost,
-  private, link-local, multicast, reserved and loopback IP addresses
-- Concurrent processing limit and configurable timeouts
+Documented public endpoints or plain URL rewriting only:
+
+- **Pixeldrain** `/u/ID`, `/l/ID`: name/size via the public file/list info API, direct download link.
+- **Internet Archive** `/details/ID`: file list from the metadata API.
+- **Google Drive**: `/file/d/ID`, `open?id=`, `uc?id=` normalized to one download link (quota/confirm pages are not bypassed).
+- **Dropbox**: share links rewritten to `dl=1`.
+- **Shorteners** (bit.ly, tinyurl, t.co, is.gd, ...): plain redirects expanded and noted.
+
+Not implemented on purpose: ad-gate/countdown shorteners, CAPTCHA, login/paywall workarounds, and GoFile (its API needs a reverse-engineered anti-bot token).
+
+## Auto-click (optional)
+
+Some GDFlix pages build their link only after a "Generate Cloud/Quick Link" click. With `AUTO_CLICK=1` the bot opens the page in headless Chromium (Playwright), presses the button like a visitor would, waits (up to `AUTO_CLICK_TIMEOUT`) for the generated link, and merges it with the mirror links already on the page. It uses an honest User-Agent, applies the same public-address checks to every browser request, and **stops with a message if an anti-bot challenge (Cloudflare/Turnstile/reCAPTCHA/hCaptcha) appears** - it never solves or evades one. Generated links are session-bound and can expire. Docker: `docker build --build-arg WITH_BROWSER=1 .` (the compose file's read-only root needs a larger `/tmp` tmpfs, e.g. 256m without `noexec`, for Chromium).
+
+## What's improved
+
+- Results are cached (`CACHE_TTL`), transient 429/5xx/transport errors retry once, cloud pages expand in parallel.
+- `/b` works in groups and as a reply; hidden text-link entities are read.
+- Optional `ALLOWED_USERS` allow-list and per-user `USER_COOLDOWN`.
+
+- GDFlix detection uses exact domain/subdomain boundaries rather than substring matching.
+- GDFlix domain rotation candidates are restricted to recognized/configured GDFlix domains.
+- GDFlix `/file/` pages prioritize mirror actions; `/cloud/` pages are expanded to publicly visible external links.
+- HTML extraction also recognizes explicit `data-url`, `data-href`, `data-link`, and `formaction` attributes without executing JavaScript.
+- Generic HTML and redirect inspection works for any reachable public HTTP(S) host.
+- Host labels cover common services including GoFile, Pixeldrain, Google Drive, MediaFire, MEGA, TeraBox, Send.cm, KrakenFiles, BuzzHeavier, Rapidgator, NitroFlare, Uptobox, MultiUp, Dropbox, OneDrive, and others. Labels are identification only, not provider-specific integrations.
+- Multiple submitted URLs are inspected concurrently under a global semaphore.
+- Telegram HTML output is escaped and split into complete message chunks rather than blindly truncated.
+- Request limits, timeouts, redirect limits, response-body caps, and URL validation are enforced.
+- Docker uses a separate wheel-building stage and runs as a non-root user.
+
+## Important support distinction
+
+The resolver can inspect ordinary redirects and HTML links on arbitrary supported public websites. A host label only identifies the destination service; it does not mean the bot has a special integration for that service. JavaScript-only links, authenticated content, CAPTCHA, anti-bot challenges, and provider-specific APIs are not handled. Use an official public API adapter when a provider documents one.
 
 ## Setup
 
-1. Create a Telegram bot with [@BotFather](https://t.me/BotFather).
-2. Get `API_ID` and `API_HASH` from [my.telegram.org](https://my.telegram.org).
-3. Copy `.env.example` to `.env` and fill in your credentials.
+1. Create a bot with [@BotFather](https://t.me/BotFather).
+2. Obtain `API_ID` and `API_HASH` from [my.telegram.org](https://my.telegram.org).
+3. Copy `.env.example` to `.env` and fill in the credentials.
 4. Install and run:
 
    ```bash
@@ -34,121 +53,62 @@ content for users.
    python -m bot
    ```
 
-On Windows PowerShell, activate with `.venv\\Scripts\\Activate.ps1`.
+On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`.
 
-## Docker: build and run manually
+## Commands
 
-Run these commands from the project root (the directory containing `Dockerfile`,
-`requirements.txt`, and the `bot/` folder).
+- `/start` — introduction
+- `/help` — usage and limitations
+- `/b https://example.com/file` — inspect a link
 
-1. Create and edit the environment file:
+You can also send one or more HTTP(S) URLs in a private chat. Up to five URLs are accepted per message.
 
-   ```bash
-   cp .env.example .env
-   nano .env
-   ```
+## Configuration
 
-   Add your Telegram `API_ID`, `API_HASH`, and `BOT_TOKEN` values. Keep `.env`
-   private; do not upload it to Git or share it.
+| Variable | Default | Meaning |
+|---|---:|---|
+| `API_ID` | required | Telegram API ID |
+| `API_HASH` | required | Telegram API hash |
+| `BOT_TOKEN` | required | Bot token |
+| `MAX_CONCURRENT` | `5` | Global concurrent inspection limit (clamped to 1–20) |
+| `REQUEST_TIMEOUT` | `20` | HTTP timeout in seconds (clamped to 3–90) |
+| `MAX_REDIRECTS` | `8` | Maximum HTTP redirects (clamped to 0–15) |
+| `MAX_LINKS` | `12` | Maximum extracted links per page (clamped to 1–50) |
+| `PORT` | `8080` | Health server port |
+| `LOG_LEVEL` | `INFO` | Python logging level |
+| `USER_AGENT` | built-in | Optional HTTP User-Agent override |
+| `GDFLIX_DOMAINS` | built-in list | Comma-separated additional/known GDFlix hostnames |
+| `ALLOWED_USERS` | empty (everyone) | Comma-separated Telegram user IDs allowed to use the bot |
+| `USER_COOLDOWN` | `3` | Seconds between requests per user |
+| `CACHE_TTL` | `600` | Seconds to cache results (`0` disables) |
 
-2. Build the image:
+Never commit `.env` or share your bot token/API hash.
 
-   ```bash
-   docker build -t gdflix-bot .
-   ```
-
-3. Remove an older container with the same name, if one exists:
-
-   ```bash
-   docker rm -f gdflix-bot 2>/dev/null || true
-   ```
-
-4. Create and start the container:
-
-   ```bash
-   docker run -d \\
-     --name gdflix-bot \\
-     --restart unless-stopped \\
-     --env-file .env \\
-     gdflix-bot:latest
-   ```
-
-5. Check that it is running and view its logs:
-
-   ```bash
-   docker ps
-   docker logs -f gdflix-bot
-   ```
-
-   Press `Ctrl+C` to stop following the logs; this does not stop the container.
-
-### Docker management commands
+## Docker
 
 ```bash
-# Stop the bot
-docker stop gdflix-bot
-
-# Start it again
-docker start gdflix-bot
-
-# Restart it
-docker restart gdflix-bot
-
-# View the latest 100 log lines
-docker logs --tail 100 gdflix-bot
-
-# Follow logs continuously
-docker logs -f gdflix-bot
-
-# Stop and remove the container (keeps the image and project files)
-docker rm -f gdflix-bot
-```
-
-### Rebuild after changing code
-
-```bash
-docker rm -f gdflix-bot 2>/dev/null || true
-docker build -t gdflix-bot .
-docker run -d \\
-  --name gdflix-bot \\
-  --restart unless-stopped \\
-  --env-file .env \\
-  gdflix-bot:latest
-```
-
-The bot uses Telegram polling, so you normally do not need to publish a host port
-with `-p`. The Docker image must have a suitable `CMD`, such as
-`CMD ["python", "-m", "bot"]`, and the project must include `bot/__main__.py`.
-
-## Docker Compose
-
-If you prefer Docker Compose, create `.env` as described above, then run:
-
-```bash
+cp .env.example .env
+# Edit .env and add Telegram credentials
 docker compose up -d --build
 docker compose logs -f
 ```
 
-To stop the Compose service:
+The container runs as an unprivileged user, drops Linux capabilities, uses a read-only root filesystem, stores the Pyrogram session in writable temporary storage, and exposes a simple health endpoint on port 8080. For manual Docker usage:
 
 ```bash
-docker compose down
+docker build -t multihost-link-inspector .
+docker run -d --name link-inspector --restart unless-stopped \
+  --env-file .env -p 8080:8080 multihost-link-inspector
 ```
 
-Use either the manual `docker run` method or Docker Compose for the same bot
-instance; do not start both at the same time unless you intentionally want two
-instances.
+## Security notes
 
-## Adding a host label
+- Only HTTP/HTTPS URLs on standard ports are accepted.
+- DNS answers are checked and any non-global address causes rejection; each redirect is validated again.
+- Response bodies are capped at 2 MB and redirect depth is limited.
+- This DNS validation is defense-in-depth, not a complete defense against DNS rebinding between validation and the HTTP client's connection. For hostile multi-tenant deployments, run outbound requests behind an egress firewall/proxy that blocks private, loopback, link-local, metadata-service, and reserved networks at connection time.
+- Extracted external links are displayed, not fetched automatically (except the GDFlix cloud-page expansion flow).
 
-Edit `HOST_LABELS` in `bot/hosts.py`. Add a lowercase domain fragment and a
-friendly label. The bot only identifies and presents links; provider-specific
-API integrations should use that provider's documented public API and terms.
+## Adding a provider adapter
 
-## Notes
-
-- Some sites render links with JavaScript; this lightweight parser cannot see
-  those links. Add an official API adapter when a host documents one.
-- File size is shown only when the source page exposes it in ordinary HTML.
-- Never put your bot token or API hash in source control.
-- Run this only for files you own or are authorized to distribute.
+Keep provider-specific logic in a dedicated module under `bot/hosts/` (or a future `bot/providers/` package). Use documented public endpoints or publicly visible page markup, apply the same URL validation and response-size limits, and add fixture-based tests. Do not implement CAPTCHA, login, paywall, DRM, or anti-bot circumvention.

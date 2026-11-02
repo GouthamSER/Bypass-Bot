@@ -1,0 +1,2 @@
+# Optional: only needed when AUTO_CLICK=1
+playwright>=1.45,<2
