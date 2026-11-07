@@ -19,7 +19,7 @@ from .providers import is_shortener, resolve_provider
 __all__ = ["Result", "inspect_url", "parse_html", "fetch_with_redirects"]
 
 log = logging.getLogger("resolver")
-SIZE_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB)\b", re.I)
+SIZE_RE = re.compile(r"\b(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB|KIB|MIB|GIB|TIB|BYTES)\b", re.I)
 MAX_BODY = 2_000_000
 REDIRECT_CODES = (301, 302, 303, 307, 308)
 RETRY_STATUS = (429, 502, 503, 504)
@@ -325,7 +325,7 @@ async def _inspect(client, url, max_redirects, max_links) -> Result:
                                          or "cf-mitigated" in response_headers
                                          or "just a moment" in body
                                          or "cf-ray" in response_headers):
-            hint = " (Cloudflare bot check blocked this server's request; the bot does not bypass it)"
+            hint = " (Cloudflare bot check blocked this server's request; the bot does not bypass it. Tip: save the page in your browser and send the .html file directly to the bot)"
         raise ValueError(f"Page returned HTTP {status} at {final_url}{hint}")
 
     if "text/html" not in content_type and "application/xhtml+xml" not in content_type:
@@ -415,6 +415,7 @@ async def _render_wait(result: Result, url: str, max_links: int) -> Result:
 
 async def inspect_url(url: str, timeout: float = 20, max_redirects: int = 8,
                       max_links: int = 12) -> Result:
+    url = url.strip()
     cached = _cache_get(url)
     if cached is not None:
         return cached
@@ -557,20 +558,3 @@ def _gdflix_state(soup, final_url: str, found) -> tuple[str | None, bool]:
         return ("Links on this page are created by a button click (browser script/anti-bot check). "
                 "The bot cannot press it; open the page in your browser."), True
     return None, False
-    external = [u for label, u in found
-                if label != "Open resolved page" and "login" not in label.lower()
-                and not _is_gdflix_host(urlparse(u).hostname) and urlparse(u).hostname != "t.me"]
-    if external:
-        return None  # a real external mirror is present, nothing to explain
-    bar = soup.select_one("#progress-bar, .progress-bar")
-    if bar is not None:
-        try:
-            pct = f" ({float(bar.get('aria-valuenow')):.0f}%)"
-        except (TypeError, ValueError):
-            pct = ""
-        return f"GDFlix is still processing this file{pct}. No link exists yet; retry later."
-    buttons = " ".join(b.get_text(" ", strip=True).lower() for b in soup.select("button, input[type=button]"))
-    if "generate" in buttons:
-        return ("Links on this page are created by a button click (browser script/anti-bot check). "
-                "The bot cannot press it; open the page in your browser.")
-    return None

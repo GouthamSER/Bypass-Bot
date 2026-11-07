@@ -1,7 +1,10 @@
 import asyncio
 import html
+import logging
 import os
 import re
+import sys
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -15,14 +18,15 @@ from .mhtml import extract_html
 from .resolver import inspect_url, parse_html
 
 load_dotenv()
-import logging
+
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO").upper(),
                     format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("bot")
 
-API_ID = int(os.environ["API_ID"])
-API_HASH = os.environ["API_HASH"]
-BOT_TOKEN = os.environ["BOT_TOKEN"]
+API_ID_RAW = os.getenv("API_ID", "").strip()
+API_ID = int(API_ID_RAW) if API_ID_RAW.isdigit() else 0
+API_HASH = os.getenv("API_HASH", "").strip()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 MAX_CONCURRENT = max(1, min(int(os.getenv("MAX_CONCURRENT", "5")), 20))
 TIMEOUT = max(3.0, min(float(os.getenv("REQUEST_TIMEOUT", "20")), 90.0))
 MAX_REDIRECTS = max(0, min(int(os.getenv("MAX_REDIRECTS", "8")), 15))
@@ -33,8 +37,17 @@ ALLOWED_USERS = {int(x) for x in os.getenv("ALLOWED_USERS", "").replace(" ", "")
 COOLDOWN = max(0.0, float(os.getenv("USER_COOLDOWN", "3")))
 _last_request: dict[int, float] = {}
 
-# Keep the Pyrogram SQLite session on writable ephemeral storage (also works in read-only Docker).
-app = Client("/tmp/multihost_link_inspector", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+# Keep the Pyrogram SQLite session on writable ephemeral storage (cross-platform: Windows, Linux, Koyeb, Heroku, Render, Docker).
+_default_session = os.path.join(tempfile.gettempdir(), "multihost_link_inspector")
+SESSION_PATH = os.getenv("SESSION_PATH", _default_session)
+
+# Use dummy credentials if env vars are unset so module can be imported for testing/inspection.
+app = Client(
+    SESSION_PATH,
+    api_id=API_ID if API_ID > 0 else 1,
+    api_hash=API_HASH or "00000000000000000000000000000000",
+    bot_token=BOT_TOKEN or "123456:dummy_token_for_init",
+)
 semaphore = asyncio.Semaphore(MAX_CONCURRENT)
 URL_RE = re.compile(r"https?://[^\s<>]+")
 
@@ -44,7 +57,7 @@ def extract_urls(text: str, extra: list[str] | None = None) -> list[str]:
     urls: list[str] = []
     candidates = [*URL_RE.findall(text or ""), *(extra or [])]
     for match in candidates:
-        url = match.rstrip(".,);]}>")
+        url = match.rstrip(".,);]}>!?:\"'")
         if url.lower().startswith(("http://", "https://")) and url not in urls:
             urls.append(url)
     return urls[:5]
@@ -101,7 +114,9 @@ def friendly_name(label: str, url: str) -> str:
     for key, name in FRIENDLY:
         if key in low:
             return name
-    return label[:40] or host_label(url)
+    if label and low not in ("unknown", "link", "download link"):
+        return label[:40]
+    return host_label(url)
 
 
 def clean_title(title: str) -> str:
@@ -247,11 +262,15 @@ async def handle_links(_, message):
 class _Health(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", "2")
         self.end_headers()
         self.wfile.write(b"ok")
 
     def do_HEAD(self):
         self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", "2")
         self.end_headers()
 
     def log_message(self, *args):
@@ -286,14 +305,25 @@ async def handle_html_file(_, message):
 
 
 def _start_health_server():
-    """Tiny HTTP server so hosts that need an open port (Koyeb, Render, Docker -p) stay healthy."""
-    port = int(os.getenv("PORT", "8080"))
-    server = HTTPServer(("0.0.0.0", port), _Health)
-    server.daemon_threads = True
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    """Tiny HTTP server so hosts that need an open port (Koyeb, Render, Heroku, Docker -p) stay healthy."""
+    port_str = os.getenv("PORT", "8080")
+    try:
+        port = int(port_str)
+    except ValueError:
+        port = 8080
+    try:
+        server = HTTPServer(("0.0.0.0", port), _Health)
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        log.info("Health server listening on port %d", port)
+    except Exception as exc:
+        log.warning("Could not start health server on port %d: %s", port, exc)
 
 
 def main():
+    if not (API_ID and API_HASH and BOT_TOKEN):
+        log.error("Missing required environment variables: API_ID, API_HASH, and BOT_TOKEN must be set.")
+        sys.exit(1)
     _start_health_server()
     app.run()
 

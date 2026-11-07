@@ -23,6 +23,16 @@ HOST_LABELS = {
     "wetransfer.com": "WeTransfer", "anonfiles.com": "AnonFiles",
     "messycloud.ink": "MessyCloud", "juicybits.site": "JuicyBits",
     "file.io": "File.io", "userscloud.com": "UsersCloud",
+    "catbox.moe": "Catbox", "files.catbox.moe": "Catbox", "litterbox.catbox.moe": "Litterbox",
+    "github.com": "GitHub", "raw.githubusercontent.com": "GitHub Raw",
+    "gitlab.com": "GitLab", "huggingface.co": "Hugging Face",
+    "sourceforge.net": "SourceForge", "workupload.com": "WorkUpload",
+    "filemail.com": "Filemail", "fastupload.io": "FastUpload", "fastupload.to": "FastUpload",
+    "fuckingfast.co": "FuckingFast", "solidfiles.com": "Solidfiles",
+    "dailyuploads.net": "DailyUploads", "uploadrar.com": "UploadRar",
+    "doodstream.com": "DoodStream", "dood.to": "DoodStream", "dood.so": "DoodStream", "dood.cx": "DoodStream",
+    "streamtape.com": "Streamtape", "streamtape.net": "Streamtape",
+    "bitbucket.org": "Bitbucket", "katfile.com": "Katfile",
 }
 
 

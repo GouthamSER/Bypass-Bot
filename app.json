@@ -1,0 +1,62 @@
+{
+  "name": "Multi-Host Link Inspector Bot",
+  "description": "A Telegram bot that follows ordinary HTTP redirects and inspects multi-host links.",
+  "keywords": ["telegram", "bot", "pyrogram", "link-inspector"],
+  "repository": "https://github.com/example/multihost-link-inspector",
+  "success_url": "/",
+  "env": {
+    "API_ID": {
+      "description": "Your Telegram API ID from https://my.telegram.org",
+      "required": true
+    },
+    "API_HASH": {
+      "description": "Your Telegram API Hash from https://my.telegram.org",
+      "required": true
+    },
+    "BOT_TOKEN": {
+      "description": "Telegram Bot Token obtained from @BotFather",
+      "required": true
+    },
+    "MAX_CONCURRENT": {
+      "description": "Maximum concurrent URL inspections (1-20)",
+      "value": "5",
+      "required": false
+    },
+    "REQUEST_TIMEOUT": {
+      "description": "HTTP request timeout in seconds (3-90)",
+      "value": "20",
+      "required": false
+    },
+    "MAX_REDIRECTS": {
+      "description": "Maximum redirects to follow (0-15)",
+      "value": "8",
+      "required": false
+    },
+    "MAX_LINKS": {
+      "description": "Maximum links extracted per page (1-50)",
+      "value": "12",
+      "required": false
+    },
+    "CACHE_TTL": {
+      "description": "Results cache TTL in seconds (0 to disable)",
+      "value": "600",
+      "required": false
+    },
+    "USER_COOLDOWN": {
+      "description": "Cooldown between requests per user in seconds",
+      "value": "3",
+      "required": false
+    },
+    "ALLOWED_USERS": {
+      "description": "Comma-separated Telegram user IDs allowed to use the bot (blank for everyone)",
+      "required": false
+    }
+  },
+  "formation": {
+    "web": {
+      "quantity": 1,
+      "size": "eco"
+    }
+  }
+}
+

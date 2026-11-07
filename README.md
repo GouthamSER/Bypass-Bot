@@ -10,7 +10,17 @@ Documented public endpoints or plain URL rewriting only:
 - **Internet Archive** `/details/ID`: file list from the metadata API.
 - **Google Drive**: `/file/d/ID`, `open?id=`, `uc?id=` normalized to one download link (quota/confirm pages are not bypassed).
 - **Dropbox**: share links rewritten to `dl=1`.
-- **Shorteners** (bit.ly, tinyurl, t.co, is.gd, ...): plain redirects expanded and noted.
+- **MediaFire**: direct download extraction from public file pages.
+- **GitHub**: releases metadata API for release assets and blob URLs normalized to `raw.githubusercontent.com`.
+- **GitLab**: blob URLs rewritten to `/-/raw/` direct download.
+- **Bitbucket**: file view URLs rewritten to `/raw/` direct download.
+- **BuzzHeavier**: direct download URL normalizer.
+- **FuckingFast**: direct download `/dl/` link normalizer.
+- **Catbox / Litterbox**: direct public file links (`files.catbox.moe`, `litterbox.catbox.moe`).
+- **Hugging Face**: model/dataset file blob URLs rewritten to `/resolve/` direct download.
+- **SourceForge**: project file links normalized to direct download mirrors.
+- **OneDrive**: public share links rewritten with `download=1`.
+- **Shorteners** (bit.ly, tinyurl, t.co, is.gd, spoo.me, clck.ru, git.io, ...): plain redirects expanded and noted.
 
 Not implemented on purpose: ad-gate/countdown shorteners, CAPTCHA, login/paywall workarounds, and GoFile (its API needs a reverse-engineered anti-bot token).
 
@@ -83,6 +93,50 @@ You can also send one or more HTTP(S) URLs in a private chat. Up to five URLs ar
 | `CACHE_TTL` | `600` | Seconds to cache results (`0` disables) |
 
 Never commit `.env` or share your bot token/API hash.
+
+## Cloud Deployment
+
+The bot includes built-in HTTP health check support (binding to `$PORT` or `8080`) so cloud platforms can verify the application is active and healthy.
+
+### Deploying to Koyeb
+1. Fork or push this repository to GitHub.
+2. In the Koyeb dashboard, click **Create App** and connect your GitHub repository.
+3. Koyeb will detect either the `Dockerfile` or use the provided `koyeb.yaml`.
+4. Set the following environment variables:
+   - `API_ID`
+   - `API_HASH`
+   - `BOT_TOKEN`
+5. Koyeb routes health checks to `/health` on port `8080` (or your configured `PORT`).
+
+### Deploying to Heroku
+1. Install the Heroku CLI and login: `heroku login`.
+2. Create an app: `heroku create your-app-name`.
+3. Set the required config vars:
+   ```bash
+   heroku config:set API_ID=123456 API_HASH=your_hash BOT_TOKEN=your_token
+   ```
+4. Deploy:
+   ```bash
+   git push heroku main
+   ```
+5. Heroku reads `Procfile` (`web: python run.py` or `worker: python run.py`) and `runtime.txt`. You can also deploy via the Heroku dashboard using `app.json`.
+
+### Deploying to Render
+1. In Render, select **New Blueprint Instance** and connect this repository (Render reads `render.yaml`).
+2. Alternatively, create a **Web Service** or **Background Worker**:
+   - **Environment**: `Python`
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `python run.py`
+   - **Health Check Path**: `/health`
+3. Add environment variables: `API_ID`, `API_HASH`, and `BOT_TOKEN`.
+
+## Running Tests
+
+Run the built-in test suite:
+
+```bash
+python -m unittest discover tests
+```
 
 ## Docker
 
